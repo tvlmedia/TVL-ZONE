@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EL Zone – LOG Overlay</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="group">
+      <label class="lbl">Upload LOG still</label>
+      <input id="file" type="file" accept="image/*" />
+    </div>
+
+    <div class="group">
+      <label class="lbl">Input Color Space</label>
+      <select id="logCurve" disabled>
+        <option value="slog3">S-Gamut3.Cine / S-Log3 (Sony)</option>
+        <option value="logc3_ei800">ARRI LogC3 (EI 800)</option>
+        <option value="bmd_film_gen5">Blackmagic Film Gen 5 (PYXIS)</option>
+        <option value="dlog_x9">DJI D-Log (X9 / Ronin 4D)</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <button id="toggleEl" disabled>EL Zone: OFF</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="viewer">
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <aside class="side">
+      <div class="card">
+        <div class="title">Legend</div>
+        <div id="legend" class="legend"></div>
+      </div>
+
+      <div class="card hint">
+        <div class="title">Notes</div>
+        <p>
+          Upload een LOG still, kies je curve, toggle EL Zone aan/uit.
+          (V1 is LOG-only; Rec709/graded fix komt hierna.)
+        </p>
+      </div>
+    </aside>
+  </main>
+
+  <script src="./script.js"></script>
+</body>
+</html>
