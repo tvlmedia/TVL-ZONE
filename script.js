@@ -8,6 +8,11 @@ let img = new Image();
 let hasImage = false;
 let elOn = false;
 
+// Cache: originele pixels + overlay pixels
+let baseImageData = null;
+let overlayImageData = null;
+let lastCurveKey = null;
+
 /**
  * Palette: later kunnen we de hexes 1:1 matchen met SmallHD door te samplen.
  * Buckets: -6,-5,-4,-3,-2,-1,-0.5,0,+0.5,+1,+2,+3,+4,+5,+6
@@ -33,15 +38,19 @@ const ZCOL = new Map([
 // Legend
 const legendOrder = [6,5,4,3,2,1,0.5,0,-0.5,-1,-2,-3,-4,-5,-6];
 const legend = document.getElementById("legend");
-legend.innerHTML = legendOrder.map(z => `
-  <div class="swatch" style="background:${ZCOL.get(z)}"></div>
-  <div style="font-size:12px; opacity:.9">${z > 0 ? "+"+z : ""+z} stop</div>
-`).join("");
+if (legend) {
+  legend.innerHTML = legendOrder.map(z => `
+    <div class="swatch" style="background:${ZCOL.get(z)}"></div>
+    <div style="font-size:12px; opacity:.9">${z > 0 ? "+"+z : ""+z} stop</div>
+  `).join("");
+}
 
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
   return [(n>>16)&255, (n>>8)&255, n&255];
 }
+
+// Precompute palette to RGB arrays
 const pal = {};
 for (const [k, hex] of ZCOL.entries()) pal[k] = hexToRgb(hex);
 
@@ -73,14 +82,11 @@ function quantizeStops(st) {
 // Sony S-Log3 inverse (normalized 0..1 in/out), per Sony formula.
 function decodeSLog3(v) {
   v = clamp01(v);
-
-  // Sony uses piecewise. We implement in normalized float space.
-  // Threshold derived from Sony appendix (matches common implementations).
   const cut = 171.2102946929 / 1023.0;
 
   if (v >= cut) {
     // out = 10^((in*1023 - 420)/261.5) * (0.18+0.01) - 0.01
-    return Math.pow(10.0, ((v * 1023.0 - 420.0) / 261.5)) * (0.19) - 0.01;
+    return Math.pow(10.0, ((v * 1023.0 - 420.0) / 261.5)) * 0.19 - 0.01;
   } else {
     // out = (in*1023 - 95) * 0.01125 / (171.2102946929 - 95)
     return (v * 1023.0 - 95.0) * 0.01125 / (171.2102946929 - 95.0);
@@ -89,7 +95,6 @@ function decodeSLog3(v) {
 
 // ARRI LogC3 EI800 inverse (exposure values), per ARRI VFX doc.
 const LOGC3_EI800 = {
-  // "cut" is expressed in linear domain in the doc; for inverse we use the derived LOG_CUT:
   a: 5.555556,
   b: 0.052272,
   c: 0.247190,
@@ -125,58 +130,65 @@ function decodeBmdFilmGen5(y) {
 // DJI D-Log (X9) inverse (normalized 0..1)
 function decodeDLog_X9(x) {
   x = clamp01(x);
-  // From DJI whitepaper (native EI curve):
-  // if in <= 0.14: out = (in - 0.0929) / 6.025
-  // else: out = (10^(3.89616*in - 2.27752) - 0.0108) / 0.9892
   if (x <= 0.14) return (x - 0.0929) / 6.025;
   return (Math.pow(10.0, (3.89616 * x - 2.27752)) - 0.0108) / 0.9892;
 }
 
-function decodeToLinear(curve, v) {
-  switch (curve) {
-    case "slog3": return decodeSLog3(v);
-    case "logc3_ei800": return decodeLogC3_EI800(v);
-    case "bmd_film_gen5": return decodeBmdFilmGen5(v);
-    case "dlog_x9": return decodeDLog_X9(v);
-    default: return v;
-  }
+/**
+ * Curve registry (makkelijk uitbreidbaar)
+ * Als je dropdown dezelfde values gebruikt, werkt dit direct.
+ */
+const CURVES = {
+  slog3: { label: "S-Gamut3.Cine / S-Log3 (Sony)", decode: decodeSLog3 },
+  logc3_ei800: { label: "ARRI LogC3 (EI 800)", decode: decodeLogC3_EI800 },
+  bmd_film_gen5: { label: "Blackmagic Film Gen 5 (PYXIS)", decode: decodeBmdFilmGen5 },
+  dlog_x9: { label: "DJI D-Log (X9 / Ronin 4D)", decode: decodeDLog_X9 },
+};
+
+function decodeToLinear(curveKey, v) {
+  const c = CURVES[curveKey];
+  return c ? c.decode(v) : v;
 }
 
 /* =========================
-   Render
+   Rendering helpers
    ========================= */
-function render() {
-  if (!hasImage) return;
 
+function drawBase() {
+  if (!hasImage) return;
   const w = img.naturalWidth;
   const h = img.naturalHeight;
   canvas.width = w;
   canvas.height = h;
 
-  // Draw base image
   ctx.clearRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
 
-  if (!elOn) return;
+  // Cache base pixels once
+  baseImageData = ctx.getImageData(0, 0, w, h);
+}
 
-  const curve = logCurveSel.value;
+function buildOverlay(curveKey) {
+  if (!baseImageData) return;
 
-  const src = ctx.getImageData(0, 0, w, h);
+  const w = baseImageData.width;
+  const h = baseImageData.height;
+
+  const src = baseImageData.data;
   const dst = ctx.createImageData(w, h);
-  const data = src.data;
   const out = dst.data;
 
   // EL Zone reference: 18% grey as 0 stops (linear domain).
   const Yref = 0.18;
 
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i] / 255;
-    const g = data[i + 1] / 255;
-    const b = data[i + 2] / 255;
+  for (let i = 0; i < src.length; i += 4) {
+    const r = src[i] / 255;
+    const g = src[i + 1] / 255;
+    const b = src[i + 2] / 255;
 
-    const R = decodeToLinear(curve, r);
-    const G = decodeToLinear(curve, g);
-    const B = decodeToLinear(curve, b);
+    const R = decodeToLinear(curveKey, r);
+    const G = decodeToLinear(curveKey, g);
+    const B = decodeToLinear(curveKey, b);
 
     const Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
 
@@ -190,14 +202,40 @@ function render() {
     out[i + 3] = 255;
   }
 
-  // SmallHD-style: vervang beeld door false color (toggle aan/uit)
-  ctx.putImageData(dst, 0, 0);
+  overlayImageData = dst;
+  lastCurveKey = curveKey;
+}
+
+function render() {
+  if (!hasImage) return;
+
+  const curveKey = logCurveSel?.value || "slog3";
+
+  // If no base cached yet, draw it
+  if (!baseImageData) drawBase();
+
+  // Toggle behaviour: SmallHD-style = image replaced by false color when ON
+  if (!elOn) {
+    // show original
+    ctx.putImageData(baseImageData, 0, 0);
+    return;
+  }
+
+  // Build overlay only if needed
+  if (!overlayImageData || lastCurveKey !== curveKey) {
+    buildOverlay(curveKey);
+  }
+
+  // Show overlay (replaces image)
+  ctx.putImageData(overlayImageData, 0, 0);
 }
 
 /* =========================
    Events
    ========================= */
+
 toggleBtn.addEventListener("click", () => {
+  if (!hasImage) return;
   elOn = !elOn;
   toggleBtn.textContent = elOn ? "EL Zone: ON" : "EL Zone: OFF";
   render();
@@ -205,6 +243,8 @@ toggleBtn.addEventListener("click", () => {
 
 logCurveSel.addEventListener("change", () => {
   if (!hasImage) return;
+  // curve changed => overlay invalid
+  overlayImageData = null;
   render();
 });
 
@@ -213,17 +253,39 @@ fileInput.addEventListener("change", (e) => {
   if (!f) return;
 
   const url = URL.createObjectURL(f);
+
   img = new Image();
   img.onload = () => {
     hasImage = true;
     elOn = false;
 
     toggleBtn.disabled = false;
-    logCurveSel.disabled = false;
+    if (logCurveSel) logCurveSel.disabled = false;
+
     toggleBtn.textContent = "EL Zone: OFF";
 
+    // reset caches
+    baseImageData = null;
+    overlayImageData = null;
+    lastCurveKey = null;
+
+    drawBase();
     render();
+
     URL.revokeObjectURL(url);
   };
+
+  img.onerror = () => {
+    hasImage = false;
+    baseImageData = null;
+    overlayImageData = null;
+    lastCurveKey = null;
+    toggleBtn.disabled = true;
+    if (logCurveSel) logCurveSel.disabled = true;
+    toggleBtn.textContent = "EL Zone: OFF";
+    URL.revokeObjectURL(url);
+    alert("Kon afbeelding niet laden. Probeer een andere file (liefst PNG/JPG).");
+  };
+
   img.src = url;
 });
