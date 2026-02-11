@@ -173,11 +173,12 @@ const CURVES = {
     stopOffset: 0.0
   },
   bmd_film_gen5: {
-    label: "Blackmagic Film Gen 5",
-    decode: decodeBmdFilmGen5,
-    midGrey: 0.18,
-    stopOffset: BMD_GEN5.b + 0.0025
-  }
+  label: "Blackmagic Film Gen 5",
+  decode: decodeBmdFilmGen5,
+  midGrey: 0.18,
+  stopOffset: BMD_GEN5.b + 0.0025,
+  calibrationStops: 0.25   // ← kwart stopje lichter, alleen voor BMD
+}
 };
 
 function decodeToLinear(curveKey, v) {
@@ -227,6 +228,7 @@ function buildOverlay(curveKey) {
   const YrefAdj = Yref * Math.pow(2, expOff);
 
   const off = curve.stopOffset ?? 0.0;
+  const cal = curve.calibrationStops ?? 0.0;
 
   for (let i = 0; i < src.length; i += 4) {
     const r0 = src[i]     / 255;
@@ -247,8 +249,8 @@ function buildOverlay(curveKey) {
 
     // STOP calc + GLOBAL BRIGHTNESS BIAS
     const st =
-      log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12)) +
-      BRIGHT_BIAS_STOPS;
+  log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12)) +
+  cal;
 
     const z = quantizeStops(st);
 
