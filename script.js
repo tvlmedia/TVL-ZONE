@@ -172,7 +172,7 @@ const CURVES = {
     label: "Blackmagic Film Gen 5",
     decode: decodeBmdFilmGen5,
     midGrey: 0.18,
-    stopOffset: BMD_GEN5.b + 0.0025,
+    stopOffset: BMD_GEN5.b + 0.0035,
 
     // ---- FINETUNE THIS ----
     // 1.00 = none. Try 1.10–1.18. If still flat: 1.20.
