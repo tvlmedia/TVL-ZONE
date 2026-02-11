@@ -1,4 +1,4 @@
-// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + BMD contrast fix)
+// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + BMD contrast)
 
 const fileInput     = document.getElementById("file");
 const logCurveSel   = document.getElementById("logCurve");
@@ -159,24 +159,28 @@ const CURVES = {
     decode: decodeSLog3,
     midGrey: 0.18,
     stopOffset: 0.0,
-    contrast: 1.0
+    contrastStops: 1.0,
+    biasStops: 0.0,
   },
   logc3_ei800: {
     label: "ARRI LogC3 (EI 800)",
     decode: decodeLogC3_EI800,
     midGrey: 0.18,
     stopOffset: 0.0,
-    contrast: 1.0
+    contrastStops: 1.0,
+    biasStops: 0.0,
   },
   bmd_film_gen5: {
     label: "Blackmagic Film Gen 5",
     decode: decodeBmdFilmGen5,
     midGrey: 0.18,
-    stopOffset: BMD_GEN5.b + 0.0035,
+    stopOffset: BMD_GEN5.b + 0.0025,
 
-    // ---- FINETUNE THIS ----
-    // 1.00 = none. Try 1.10–1.18. If still flat: 1.20.
-    contrast: 1.08
+    // === TUNE HIER ===
+    // Contrast in stop-domain: >1 = meer contrast (high hoger, low lager)
+    contrastStops: 1.08,   // jij had 1.14 → nu 1.08
+    // Wil je "geen stops erbij"? zet dit op 0.0
+    biasStops: 0.35        // jij zei 0.25 → nu 0.35 (optioneel)
   }
 };
 
@@ -188,14 +192,11 @@ function decodeToLinear(curveKey, v) {
 // =========================
 // Luma model (key fix)
 // =========================
-// SmallHD-achtig gedrag voor verzadigde kleuren:
-// - "maxRGB" maakt cyan/blauw niet kunstmatig donker.
 const LUMA_MODE = "maxRGB"; // "maxRGB" | "avgRGB" | "rec709"
 
 function computeY(R, G, B) {
   if (LUMA_MODE === "maxRGB") return Math.max(R, G, B);
   if (LUMA_MODE === "avgRGB") return (R + G + B) / 3;
-  // rec709 (linear)
   return 0.2126 * R + 0.7152 * G + 0.0722 * B;
 }
 
@@ -227,7 +228,8 @@ function buildOverlay(curveKey) {
   const YrefAdj = Yref * Math.pow(2, expOff);
 
   const off = curve.stopOffset ?? 0.0;
-  const contrast = curve.contrast ?? 1.0;
+  const contrast = curve.contrastStops ?? 1.0;
+  const bias = curve.biasStops ?? 0.0;
 
   for (let i = 0; i < src.length; i += 4) {
     const r0 = src[i]     / 255;
@@ -243,20 +245,21 @@ function buildOverlay(curveKey) {
     const G = decodeToLinear(curveKey, g);
     const B = decodeToLinear(curveKey, b);
 
-    const Y = computeY(R, G, B);
+    const Y  = computeY(R, G, B);
+    const Ycl = Math.max(0, Y);
 
-    // ---- CONTRAST AROUND PIVOT (only matters when contrast != 1) ----
-    // Pivot = mid grey adjusted by expOffset, so slider blijft logisch.
-    const pivot = YrefAdj;
-    const Yc = pivot + (Y - pivot) * contrast;
+    // Base stops
+    let st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
 
-    const Ycl = Math.max(0, Yc);
+    // Contrast in stop-domain (dit is de echte “meer contrast” fix)
+    st *= contrast;
 
-    // STOP calc (no extra stops added)
-    const st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
+    // Optional per-curve bias (alleen BMD gebruikt dit nu)
+    st += bias;
+
     const z = quantizeStops(st);
-
     const [pr, pg, pb] = pal[z];
+
     out[i]     = pr;
     out[i + 1] = pg;
     out[i + 2] = pb;
