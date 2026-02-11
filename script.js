@@ -1,10 +1,4 @@
-// TVL EL ZONE — complete script (with Legal/Full toggle support)
-// Requires in HTML (optional but recommended):
-//  - <input type="checkbox" id="legalLevels">  (Legal/Video levels toggle)
-//  - <input type="range" id="expOffset" ...>   (optional exposure offset in stops)
-//
-// Existing required elements:
-//  - #file, #logCurve, #toggleEl, #canvas, #legend
+// TVL EL ZONE — complete script (Legal/Full toggle + Gen5 stop-offset fix)
 
 const fileInput   = document.getElementById("file");
 const logCurveSel = document.getElementById("logCurve");
@@ -71,6 +65,26 @@ for (const [k, hex] of ZCOL.entries()) pal[k] = hexToRgb(hex);
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 const log2 = (x) => Math.log(x) / Math.log(2);
 
+/* =========================
+   Levels: Full vs Legal
+   ========================= */
+
+function isLegalLevels() {
+  return !!(legalLevelsEl && legalLevelsEl.checked);
+}
+
+// remap 0..1 values; if legal enabled, stretch 16–235 to 0–1 (8-bit video range)
+function remapLevels01(v) {
+  if (!isLegalLevels()) return v;
+  const min = 16 / 255;
+  const max = 235 / 255;
+  return clamp01((v - min) / (max - min));
+}
+
+/* =========================
+   Stops quantize
+   ========================= */
+
 function quantizeStops(st) {
   if (st >= 5.5) return 6;
   if (st >= 4.5) return 5;
@@ -89,20 +103,10 @@ function quantizeStops(st) {
   return -6;
 }
 
-/* =========================
-   Levels: Full vs Legal
-   ========================= */
-
-function isLegalLevels() {
-  return !!(legalLevelsEl && legalLevelsEl.checked);
-}
-
-// remap 0..1 values; if legal is enabled, stretch 16–235 to 0–1 (8-bit video range)
-function remapLevels01(v) {
-  if (!isLegalLevels()) return v;
-  const min = 16 / 255;
-  const max = 235 / 255;
-  return clamp01((v - min) / (max - min));
+function getExposureOffsetStops() {
+  if (!expOffsetEl) return 0;
+  const n = parseFloat(expOffsetEl.value);
+  return Number.isFinite(n) ? n : 0;
 }
 
 /* =========================
@@ -148,13 +152,6 @@ const BMD_GEN5 = {
   linOffset: 0.09246575342465753,
   linCut: 0.005,
 };
-
-const CURVES = {
-  slog3:         { label: "S-Gamut3.Cine / S-Log3 (Sony)", decode: decodeSLog3,        midGrey: 0.18, stopOffset: 0.0 },
-  logc3_ei800:   { label: "ARRI LogC3 (EI 800)",           decode: decodeLogC3_EI800,  midGrey: 0.18, stopOffset: 0.0 },
-  bmd_film_gen5: { label: "Blackmagic Film Gen 5",         decode: decodeBmdFilmGen5,  midGrey: 0.18, stopOffset: BMD_GEN5.b },
-};
-
 const BMD_GEN5_LOG_CUT = BMD_GEN5.linSlope * BMD_GEN5.linCut + BMD_GEN5.linOffset;
 
 function decodeBmdFilmGen5(y) {
@@ -166,23 +163,33 @@ function decodeBmdFilmGen5(y) {
 }
 
 /**
- * Curve registry
+ * Curve registry (ONE place)
+ * stopOffset: gebruikt in stop-berekening (Gen5 needs it)
  */
 const CURVES = {
-  slog3:         { label: "S-Gamut3.Cine / S-Log3 (Sony)", decode: decodeSLog3,        midGrey: 0.18 },
-  logc3_ei800:   { label: "ARRI LogC3 (EI 800)",           decode: decodeLogC3_EI800,  midGrey: 0.18 },
-  bmd_film_gen5: { label: "Blackmagic Film Gen 5",         decode: decodeBmdFilmGen5,  midGrey: 0.18 },
+  slog3: {
+    label: "S-Gamut3.Cine / S-Log3 (Sony)",
+    decode: decodeSLog3,
+    midGrey: 0.18,
+    stopOffset: 0.0
+  },
+  logc3_ei800: {
+    label: "ARRI LogC3 (EI 800)",
+    decode: decodeLogC3_EI800,
+    midGrey: 0.18,
+    stopOffset: 0.0
+  },
+  bmd_film_gen5: {
+    label: "Blackmagic Film Gen 5",
+    decode: decodeBmdFilmGen5,
+    midGrey: 0.18,
+    stopOffset: BMD_GEN5.b
+  }
 };
 
 function decodeToLinear(curveKey, v) {
   const c = CURVES[curveKey];
   return c ? c.decode(v) : v;
-}
-
-function getExposureOffsetStops() {
-  if (!expOffsetEl) return 0;
-  const n = parseFloat(expOffsetEl.value);
-  return Number.isFinite(n) ? n : 0;
 }
 
 /* =========================
@@ -220,35 +227,35 @@ function buildOverlay(curveKey) {
   const curve = CURVES[curveKey] || CURVES.slog3;
   const Yref = curve.midGrey ?? 0.18;
 
-  // exposure offset in stops
   const expOff = getExposureOffsetStops();
   const YrefAdj = Yref * Math.pow(2, expOff);
 
+  const off = curve.stopOffset ?? 0.0;
+
   for (let i = 0; i < src.length; i += 4) {
-    // 0..1 code values from file
     const r0 = src[i]     / 255;
     const g0 = src[i + 1] / 255;
     const b0 = src[i + 2] / 255;
 
-    // Full vs Legal remap BEFORE log decode (important!)
+    // Levels remap BEFORE log decode
     const r = remapLevels01(r0);
     const g = remapLevels01(g0);
     const b = remapLevels01(b0);
 
-    // decode per channel -> linear light
+    // Decode per channel -> linear
     const R = decodeToLinear(curveKey, r);
     const G = decodeToLinear(curveKey, g);
     const B = decodeToLinear(curveKey, b);
 
-    // linear luma
+    // Linear luma
     const Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
 
-const off = curve.stopOffset ?? 0.0;
+    // Gen5 can go slightly negative in the linear segment -> clamp
+    const Ycl = Math.max(0, Y);
 
-// clamp Y naar 0 (negatieve linear kan bij Gen5 door het lineaire segment)
-const Ycl = Math.max(0, Y);
-
-const st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));    const z = quantizeStops(st);
+    // Stop calc with optional offset (Gen5 fix)
+    const st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
+    const z = quantizeStops(st);
 
     const [pr, pg, pb] = pal[z];
     out[i]     = pr;
@@ -281,13 +288,9 @@ function render() {
     lastLevelsKey !== levelsKey ||
     lastExpKey !== expKey;
 
-  if (needsRebuild) {
-    buildOverlay(curveKey);
-  }
+  if (needsRebuild) buildOverlay(curveKey);
 
-  if (overlayImageData) {
-    ctx.putImageData(overlayImageData, 0, 0);
-  }
+  if (overlayImageData) ctx.putImageData(overlayImageData, 0, 0);
 }
 
 /* =========================
@@ -337,7 +340,6 @@ fileInput?.addEventListener("change", async (e) => {
   elOn = false;
 
   try {
-    // Prefer: bypass ICC/sRGB conversions where possible
     let bmp = null;
     if ("createImageBitmap" in window) {
       try {
@@ -361,7 +363,6 @@ fileInput?.addEventListener("change", async (e) => {
       return;
     }
 
-    // Fallback: Image() path
     const url = URL.createObjectURL(f);
     img = new Image();
     img.onload = () => {
