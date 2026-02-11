@@ -1,30 +1,29 @@
-// TVL EL ZONE — complete script (Legal/Full toggle + Gen5 stop-offset fix)
+// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode)
 
-const fileInput   = document.getElementById("file");
-const logCurveSel = document.getElementById("logCurve");
-const toggleBtn   = document.getElementById("toggleEl");
-const canvas      = document.getElementById("canvas");
-const ctx         = canvas.getContext("2d", { willReadFrequently: true });
+const fileInput     = document.getElementById("file");
+const logCurveSel   = document.getElementById("logCurve");
+const toggleBtn     = document.getElementById("toggleEl");
+const canvas        = document.getElementById("canvas");
+const ctx           = canvas.getContext("2d", { willReadFrequently: true });
 
 const legalLevelsEl = document.getElementById("legalLevels"); // optional
 const expOffsetEl   = document.getElementById("expOffset");   // optional
 
 let img = new Image();
-let baseBitmap = null; // ImageBitmap route
+let baseBitmap = null;
 let hasImage = false;
 let elOn = false;
 
-// Cache: originele pixels + overlay pixels
 let baseImageData = null;
 let overlayImageData = null;
+
 let lastCurveKey = null;
 let lastLevelsKey = null;
 let lastExpKey = null;
 
-/**
- * Palette: later kunnen we de hexes 1:1 matchen met SmallHD door te samplen.
- * Buckets: -6,-5,-4,-3,-2,-1,-0.5,0,+0.5,+1,+2,+3,+4,+5,+6
- */
+// =========================
+// Palette
+// =========================
 const ZCOL = new Map([
   [ 6,  "#ffffff"],
   [ 5,  "#ff2a2a"],
@@ -33,7 +32,7 @@ const ZCOL = new Map([
   [ 2,  "#fff04a"],
   [ 1,  "#e6ff00"],
   [ 0.5,"#c8ff6a"],
-  [ 0,  "#8a8a8a"],   // 0 stop
+  [ 0,  "#8a8a8a"],
   [-0.5,"#3cff3c"],
   [-1,  "#00ff66"],
   [-2,  "#00d9ff"],
@@ -43,7 +42,6 @@ const ZCOL = new Map([
   [-6,  "#000000"],
 ]);
 
-// Legend
 const legendOrder = [6,5,4,3,2,1,0.5,0,-0.5,-1,-2,-3,-4,-5,-6];
 const legend = document.getElementById("legend");
 if (legend) {
@@ -57,34 +55,15 @@ function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
   return [(n>>16)&255, (n>>8)&255, n&255];
 }
-
-// Precompute palette to RGB arrays
 const pal = {};
 for (const [k, hex] of ZCOL.entries()) pal[k] = hexToRgb(hex);
 
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 const log2 = (x) => Math.log(x) / Math.log(2);
 
-/* =========================
-   Levels: Full vs Legal
-   ========================= */
-
-function isLegalLevels() {
-  return !!(legalLevelsEl && legalLevelsEl.checked);
-}
-
-// remap 0..1 values; if legal enabled, stretch 16–235 to 0–1 (8-bit video range)
-function remapLevels01(v) {
-  if (!isLegalLevels()) return v;
-  const min = 16 / 255;
-  const max = 235 / 255;
-  return clamp01((v - min) / (max - min));
-}
-
-/* =========================
-   Stops quantize
-   ========================= */
-
+// =========================
+// Stops quantize
+// =========================
 function quantizeStops(st) {
   if (st >= 5.5) return 6;
   if (st >= 4.5) return 5;
@@ -109,23 +88,33 @@ function getExposureOffsetStops() {
   return Number.isFinite(n) ? n : 0;
 }
 
-/* =========================
-   LOG decoders (to linear)
-   ========================= */
+// =========================
+// Levels: Full vs Legal
+// =========================
+function isLegalLevels() {
+  return !!(legalLevelsEl && legalLevelsEl.checked);
+}
 
-// Sony S-Log3 inverse (practical decoder).
+// If legal: stretch 16–235 to 0–1 (8-bit video range)
+function remapLevels01(v) {
+  if (!isLegalLevels()) return v;
+  const min = 16 / 255;
+  const max = 235 / 255;
+  return clamp01((v - min) / (max - min));
+}
+
+// =========================
+// LOG decoders (to linear)
+// =========================
 function decodeSLog3(v) {
   v = clamp01(v);
   const cut = 171.2102946929 / 1023.0;
-
   if (v >= cut) {
     return Math.pow(10.0, ((v * 1023.0 - 420.0) / 261.5)) * 0.19 - 0.01;
-  } else {
-    return (v * 1023.0 - 95.0) * 0.01125 / (171.2102946929 - 95.0);
   }
+  return (v * 1023.0 - 95.0) * 0.01125 / (171.2102946929 - 95.0);
 }
 
-// ARRI LogC3 EI800 inverse (approx)
 const LOGC3_EI800 = {
   a: 5.555556,
   b: 0.052272,
@@ -143,11 +132,10 @@ function decodeLogC3_EI800(t) {
   return (t - LOGC3_EI800.f) / LOGC3_EI800.e;
 }
 
-// Blackmagic Film Generation 5 inverse OETF (OCIO/ACES style)
 const BMD_GEN5 = {
-  a: 0.08692876065491224,     // logSideSlope
-  b: 0.005494072432257808,    // linSideOffset
-  c: 0.5300133392291939,      // logSideOffset
+  a: 0.08692876065491224,
+  b: 0.005494072432257808,
+  c: 0.5300133392291939,
   linSlope: 8.283605932402494,
   linOffset: 0.09246575342465753,
   linCut: 0.005,
@@ -162,10 +150,9 @@ function decodeBmdFilmGen5(y) {
   return Math.exp((y - BMD_GEN5.c) / BMD_GEN5.a) - BMD_GEN5.b;
 }
 
-/**
- * Curve registry (ONE place)
- * stopOffset: gebruikt in stop-berekening (Gen5 needs it)
- */
+// =========================
+// Curve registry (ONE place)
+// =========================
 const CURVES = {
   slog3: {
     label: "S-Gamut3.Cine / S-Log3 (Sony)",
@@ -180,11 +167,12 @@ const CURVES = {
     stopOffset: 0.0
   },
   bmd_film_gen5: {
-  label: "Blackmagic Film Gen 5",
-  decode: decodeBmdFilmGen5,
-  midGrey: 0.18,
-  stopOffset: BMD_GEN5.b + 0.0325
-}
+    label: "Blackmagic Film Gen 5",
+    decode: decodeBmdFilmGen5,
+    midGrey: 0.18,
+    // jouw tweak hoort HIER:
+    stopOffset: BMD_GEN5.b + 0.0025
+  }
 };
 
 function decodeToLinear(curveKey, v) {
@@ -192,26 +180,29 @@ function decodeToLinear(curveKey, v) {
   return c ? c.decode(v) : v;
 }
 
-/* =========================
-   Rendering helpers
-   ========================= */
+// =========================
+// Luma model (key fix)
+// =========================
+// SmallHD-achtig gedrag voor verzadigde kleuren:
+// - "maxRGB" maakt cyan/blauw niet kunstmatig donker.
+const LUMA_MODE = "maxRGB"; // "maxRGB" | "avgRGB" | "rec709"
 
+function computeY(R, G, B) {
+  if (LUMA_MODE === "maxRGB") return Math.max(R, G, B);
+  if (LUMA_MODE === "avgRGB") return (R + G + B) / 3;
+  // rec709 (linear)
+  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+}
+
+// =========================
+// Rendering
+// =========================
 function drawBaseFromSources() {
   if (!hasImage) return;
-
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  if (baseBitmap) {
-    ctx.drawImage(baseBitmap, 0, 0);
-    return;
-  }
-  if (img && img.complete) {
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return;
-  }
-  if (baseImageData) {
-    ctx.putImageData(baseImageData, 0, 0);
-  }
+  if (baseBitmap) return ctx.drawImage(baseBitmap, 0, 0);
+  if (img && img.complete) return ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  if (baseImageData) ctx.putImageData(baseImageData, 0, 0);
 }
 
 function buildOverlay(curveKey) {
@@ -237,23 +228,18 @@ function buildOverlay(curveKey) {
     const g0 = src[i + 1] / 255;
     const b0 = src[i + 2] / 255;
 
-    // Levels remap BEFORE log decode
+    // levels remap BEFORE log decode
     const r = remapLevels01(r0);
     const g = remapLevels01(g0);
     const b = remapLevels01(b0);
 
-    // Decode per channel -> linear
     const R = decodeToLinear(curveKey, r);
     const G = decodeToLinear(curveKey, g);
     const B = decodeToLinear(curveKey, b);
 
-    // Linear luma
-const Y = G; // TEST: SmallHD match often closer with green channel luminance
-    
-    // Gen5 can go slightly negative in the linear segment -> clamp
+    const Y  = computeY(R, G, B);
     const Ycl = Math.max(0, Y);
 
-    // Stop calc with optional offset (Gen5 fix)
     const st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
     const z = quantizeStops(st);
 
@@ -273,14 +259,11 @@ const Y = G; // TEST: SmallHD match often closer with green channel luminance
 function render() {
   if (!hasImage) return;
 
-  const curveKey = logCurveSel?.value || "slog3";
+  const curveKey  = logCurveSel?.value || "slog3";
   const levelsKey = isLegalLevels() ? "legal" : "full";
-  const expKey = String(getExposureOffsetStops());
+  const expKey    = String(getExposureOffsetStops());
 
-  if (!elOn) {
-    drawBaseFromSources();
-    return;
-  }
+  if (!elOn) return drawBaseFromSources();
 
   const needsRebuild =
     !overlayImageData ||
@@ -289,14 +272,12 @@ function render() {
     lastExpKey !== expKey;
 
   if (needsRebuild) buildOverlay(curveKey);
-
   if (overlayImageData) ctx.putImageData(overlayImageData, 0, 0);
 }
 
-/* =========================
-   Events
-   ========================= */
-
+// =========================
+// Events
+// =========================
 toggleBtn?.addEventListener("click", () => {
   if (!hasImage) return;
   elOn = !elOn;
@@ -305,19 +286,14 @@ toggleBtn?.addEventListener("click", () => {
 });
 
 logCurveSel?.addEventListener("change", () => {
-  if (!hasImage) return;
   overlayImageData = null;
   render();
 });
-
 expOffsetEl?.addEventListener("input", () => {
-  if (!hasImage) return;
   overlayImageData = null;
   render();
 });
-
 legalLevelsEl?.addEventListener("change", () => {
-  if (!hasImage) return;
   overlayImageData = null;
   render();
 });
@@ -367,7 +343,6 @@ fileInput?.addEventListener("change", async (e) => {
     img = new Image();
     img.onload = () => {
       baseBitmap = null;
-
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
 
@@ -377,7 +352,6 @@ fileInput?.addEventListener("change", async (e) => {
       baseImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       hasImage = true;
       render();
-
       URL.revokeObjectURL(url);
     };
     img.src = url;
