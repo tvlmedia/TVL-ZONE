@@ -148,6 +148,13 @@ const BMD_GEN5 = {
   linOffset: 0.09246575342465753,
   linCut: 0.005,
 };
+
+const CURVES = {
+  slog3:         { label: "S-Gamut3.Cine / S-Log3 (Sony)", decode: decodeSLog3,        midGrey: 0.18, stopOffset: 0.0 },
+  logc3_ei800:   { label: "ARRI LogC3 (EI 800)",           decode: decodeLogC3_EI800,  midGrey: 0.18, stopOffset: 0.0 },
+  bmd_film_gen5: { label: "Blackmagic Film Gen 5",         decode: decodeBmdFilmGen5,  midGrey: 0.18, stopOffset: BMD_GEN5.b },
+};
+
 const BMD_GEN5_LOG_CUT = BMD_GEN5.linSlope * BMD_GEN5.linCut + BMD_GEN5.linOffset;
 
 function decodeBmdFilmGen5(y) {
@@ -236,8 +243,12 @@ function buildOverlay(curveKey) {
     // linear luma
     const Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
 
-    const st = log2(Math.max(1e-12, Y) / YrefAdj);
-    const z = quantizeStops(st);
+const off = curve.stopOffset ?? 0.0;
+
+// clamp Y naar 0 (negatieve linear kan bij Gen5 door het lineaire segment)
+const Ycl = Math.max(0, Y);
+
+const st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));    const z = quantizeStops(st);
 
     const [pr, pg, pb] = pal[z];
     out[i]     = pr;
