@@ -176,7 +176,7 @@ const CURVES = {
 
     // ---- FINETUNE THIS ----
     // 1.00 = none. Try 1.10–1.18. If still flat: 1.20.
-    contrast: 1.14
+    contrast: 1.08
   }
 };
 
