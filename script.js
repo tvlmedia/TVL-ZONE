@@ -1,4 +1,4 @@
-// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + global brightness bias)
+// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + BMD contrast fix)
 
 const fileInput     = document.getElementById("file");
 const logCurveSel   = document.getElementById("logCurve");
@@ -20,12 +20,6 @@ let overlayImageData = null;
 let lastCurveKey = null;
 let lastLevelsKey = null;
 let lastExpKey = null;
-
-// =========================
-// GLOBAL BRIGHTNESS BIAS (tune this)
-// =========================
-// +0.10 = subtiel, +0.15 = vaak bingo, +0.20 = duidelijk
-const BRIGHT_BIAS_STOPS = 0.0;
 
 // =========================
 // Palette
@@ -164,21 +158,26 @@ const CURVES = {
     label: "S-Gamut3.Cine / S-Log3 (Sony)",
     decode: decodeSLog3,
     midGrey: 0.18,
-    stopOffset: 0.0
+    stopOffset: 0.0,
+    contrast: 1.0
   },
   logc3_ei800: {
     label: "ARRI LogC3 (EI 800)",
     decode: decodeLogC3_EI800,
     midGrey: 0.18,
-    stopOffset: 0.0
+    stopOffset: 0.0,
+    contrast: 1.0
   },
   bmd_film_gen5: {
-  label: "Blackmagic Film Gen 5",
-  decode: decodeBmdFilmGen5,
-  midGrey: 0.18,
-  stopOffset: BMD_GEN5.b + 0.0025,
-  calibrationStops: 0.5   // ← kwart stopje lichter, alleen voor BMD
-}
+    label: "Blackmagic Film Gen 5",
+    decode: decodeBmdFilmGen5,
+    midGrey: 0.18,
+    stopOffset: BMD_GEN5.b + 0.0025,
+
+    // ---- FINETUNE THIS ----
+    // 1.00 = none. Try 1.10–1.18. If still flat: 1.20.
+    contrast: 1.14
+  }
 };
 
 function decodeToLinear(curveKey, v) {
@@ -228,7 +227,7 @@ function buildOverlay(curveKey) {
   const YrefAdj = Yref * Math.pow(2, expOff);
 
   const off = curve.stopOffset ?? 0.0;
-  const cal = curve.calibrationStops ?? 0.0;
+  const contrast = curve.contrast ?? 1.0;
 
   for (let i = 0; i < src.length; i += 4) {
     const r0 = src[i]     / 255;
@@ -244,14 +243,17 @@ function buildOverlay(curveKey) {
     const G = decodeToLinear(curveKey, g);
     const B = decodeToLinear(curveKey, b);
 
-    const Y  = computeY(R, G, B);
-    const Ycl = Math.max(0, Y);
+    const Y = computeY(R, G, B);
 
-    // STOP calc + GLOBAL BRIGHTNESS BIAS
-    const st =
-  log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12)) +
-  cal;
+    // ---- CONTRAST AROUND PIVOT (only matters when contrast != 1) ----
+    // Pivot = mid grey adjusted by expOffset, so slider blijft logisch.
+    const pivot = YrefAdj;
+    const Yc = pivot + (Y - pivot) * contrast;
 
+    const Ycl = Math.max(0, Yc);
+
+    // STOP calc (no extra stops added)
+    const st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
     const z = quantizeStops(st);
 
     const [pr, pg, pb] = pal[z];
