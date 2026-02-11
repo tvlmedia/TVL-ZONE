@@ -1,15 +1,22 @@
+// TVL EL ZONE — complete script (with Legal/Full toggle support)
+// Requires in HTML (optional but recommended):
+//  - <input type="checkbox" id="legalLevels">  (Legal/Video levels toggle)
+//  - <input type="range" id="expOffset" ...>   (optional exposure offset in stops)
+//
+// Existing required elements:
+//  - #file, #logCurve, #toggleEl, #canvas, #legend
+
 const fileInput   = document.getElementById("file");
 const logCurveSel = document.getElementById("logCurve");
 const toggleBtn   = document.getElementById("toggleEl");
 const canvas      = document.getElementById("canvas");
 const ctx         = canvas.getContext("2d", { willReadFrequently: true });
 
-// Optional: als je later een slider toevoegt
-// <input id="expOffset" type="range" min="-3" max="3" step="0.25" value="0" />
-const expOffsetEl = document.getElementById("expOffset");
+const legalLevelsEl = document.getElementById("legalLevels"); // optional
+const expOffsetEl   = document.getElementById("expOffset");   // optional
 
 let img = new Image();
-let baseBitmap = null;   // ImageBitmap route
+let baseBitmap = null; // ImageBitmap route
 let hasImage = false;
 let elOn = false;
 
@@ -17,6 +24,8 @@ let elOn = false;
 let baseImageData = null;
 let overlayImageData = null;
 let lastCurveKey = null;
+let lastLevelsKey = null;
+let lastExpKey = null;
 
 /**
  * Palette: later kunnen we de hexes 1:1 matchen met SmallHD door te samplen.
@@ -81,12 +90,26 @@ function quantizeStops(st) {
 }
 
 /* =========================
+   Levels: Full vs Legal
+   ========================= */
+
+function isLegalLevels() {
+  return !!(legalLevelsEl && legalLevelsEl.checked);
+}
+
+// remap 0..1 values; if legal is enabled, stretch 16–235 to 0–1 (8-bit video range)
+function remapLevels01(v) {
+  if (!isLegalLevels()) return v;
+  const min = 16 / 255;
+  const max = 235 / 255;
+  return clamp01((v - min) / (max - min));
+}
+
+/* =========================
    LOG decoders (to linear)
    ========================= */
 
-// Sony S-Log3 inverse (normalized 0..1 in/out).
-// Let op: dit is een praktische decoder. Voor 100% spec-match moet je
-// exact dezelfde code-value mapping gebruiken als SmallHD (10-bit scaling/offsets).
+// Sony S-Log3 inverse (practical decoder).
 function decodeSLog3(v) {
   v = clamp01(v);
   const cut = 171.2102946929 / 1023.0;
@@ -98,7 +121,7 @@ function decodeSLog3(v) {
   }
 }
 
-// ARRI LogC3 EI800 inverse (approx, per published constants)
+// ARRI LogC3 EI800 inverse (approx)
 const LOGC3_EI800 = {
   a: 5.555556,
   b: 0.052272,
@@ -116,7 +139,7 @@ function decodeLogC3_EI800(t) {
   return (t - LOGC3_EI800.f) / LOGC3_EI800.e;
 }
 
-// Blackmagic Film Generation 5 inverse OETF (log -> linear) (OCIO/ACES style)
+// Blackmagic Film Generation 5 inverse OETF (OCIO/ACES style)
 const BMD_GEN5 = {
   a: 0.08692876065491224,     // logSideSlope
   b: 0.005494072432257808,    // linSideOffset
@@ -137,13 +160,11 @@ function decodeBmdFilmGen5(y) {
 
 /**
  * Curve registry
- * Voeg pas D-Log toe als je decoder echt bestaat.
  */
 const CURVES = {
   slog3:         { label: "S-Gamut3.Cine / S-Log3 (Sony)", decode: decodeSLog3,        midGrey: 0.18 },
   logc3_ei800:   { label: "ARRI LogC3 (EI 800)",           decode: decodeLogC3_EI800,  midGrey: 0.18 },
   bmd_film_gen5: { label: "Blackmagic Film Gen 5",         decode: decodeBmdFilmGen5,  midGrey: 0.18 },
-  // dlog_x9: { label: "DJI D-Log (X9 / Ronin 4D)", decode: decodeDLog_X9, midGrey: 0.18 },
 };
 
 function decodeToLinear(curveKey, v) {
@@ -192,14 +213,20 @@ function buildOverlay(curveKey) {
   const curve = CURVES[curveKey] || CURVES.slog3;
   const Yref = curve.midGrey ?? 0.18;
 
-  // Exposure offset (stops): +1 betekent 1 stop lichter in zones (dus Yref * 2^+1)
+  // exposure offset in stops
   const expOff = getExposureOffsetStops();
   const YrefAdj = Yref * Math.pow(2, expOff);
 
   for (let i = 0; i < src.length; i += 4) {
-    const r = src[i] / 255;
-    const g = src[i + 1] / 255;
-    const b = src[i + 2] / 255;
+    // 0..1 code values from file
+    const r0 = src[i]     / 255;
+    const g0 = src[i + 1] / 255;
+    const b0 = src[i + 2] / 255;
+
+    // Full vs Legal remap BEFORE log decode (important!)
+    const r = remapLevels01(r0);
+    const g = remapLevels01(g0);
+    const b = remapLevels01(b0);
 
     // decode per channel -> linear light
     const R = decodeToLinear(curveKey, r);
@@ -221,19 +248,29 @@ function buildOverlay(curveKey) {
 
   overlayImageData = dst;
   lastCurveKey = curveKey;
+  lastLevelsKey = isLegalLevels() ? "legal" : "full";
+  lastExpKey = String(getExposureOffsetStops());
 }
 
 function render() {
   if (!hasImage) return;
 
   const curveKey = logCurveSel?.value || "slog3";
+  const levelsKey = isLegalLevels() ? "legal" : "full";
+  const expKey = String(getExposureOffsetStops());
 
   if (!elOn) {
     drawBaseFromSources();
     return;
   }
 
-  if (!overlayImageData || lastCurveKey !== curveKey) {
+  const needsRebuild =
+    !overlayImageData ||
+    lastCurveKey !== curveKey ||
+    lastLevelsKey !== levelsKey ||
+    lastExpKey !== expKey;
+
+  if (needsRebuild) {
     buildOverlay(curveKey);
   }
 
@@ -265,6 +302,12 @@ expOffsetEl?.addEventListener("input", () => {
   render();
 });
 
+legalLevelsEl?.addEventListener("change", () => {
+  if (!hasImage) return;
+  overlayImageData = null;
+  render();
+});
+
 fileInput?.addEventListener("change", async (e) => {
   const f = e.target.files?.[0];
   if (!f) return;
@@ -273,6 +316,8 @@ fileInput?.addEventListener("change", async (e) => {
   baseImageData = null;
   overlayImageData = null;
   lastCurveKey = null;
+  lastLevelsKey = null;
+  lastExpKey = null;
   baseBitmap = null;
 
   toggleBtn.disabled = false;
@@ -305,7 +350,7 @@ fileInput?.addEventListener("change", async (e) => {
       return;
     }
 
-    // Fallback: old Image() path
+    // Fallback: Image() path
     const url = URL.createObjectURL(f);
     img = new Image();
     img.onload = () => {
