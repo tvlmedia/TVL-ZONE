@@ -1,4 +1,4 @@
-// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode)
+// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + global brightness bias)
 
 const fileInput     = document.getElementById("file");
 const logCurveSel   = document.getElementById("logCurve");
@@ -20,6 +20,12 @@ let overlayImageData = null;
 let lastCurveKey = null;
 let lastLevelsKey = null;
 let lastExpKey = null;
+
+// =========================
+// GLOBAL BRIGHTNESS BIAS (tune this)
+// =========================
+// +0.10 = subtiel, +0.15 = vaak bingo, +0.20 = duidelijk
+const BRIGHT_BIAS_STOPS = 0.15;
 
 // =========================
 // Palette
@@ -170,7 +176,6 @@ const CURVES = {
     label: "Blackmagic Film Gen 5",
     decode: decodeBmdFilmGen5,
     midGrey: 0.18,
-    // jouw tweak hoort HIER:
     stopOffset: BMD_GEN5.b + 0.0025
   }
 };
@@ -240,7 +245,11 @@ function buildOverlay(curveKey) {
     const Y  = computeY(R, G, B);
     const Ycl = Math.max(0, Y);
 
-    const st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
+    // STOP calc + GLOBAL BRIGHTNESS BIAS
+    const st =
+      log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12)) +
+      BRIGHT_BIAS_STOPS;
+
     const z = quantizeStops(st);
 
     const [pr, pg, pb] = pal[z];
