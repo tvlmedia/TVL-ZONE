@@ -91,6 +91,7 @@ canvas { width: 100%; height: auto; display: block; }
   opacity: .8;
   line-height: 1.35;
 }
+
 .rangeToggle {
   display: inline-flex;
   align-items: center;
@@ -102,9 +103,10 @@ canvas { width: 100%; height: auto; display: block; }
   font-size: 13px;
   user-select: none;
 }
-.rangeToggle input {
-  transform: translateY(1px);
-}
+
+.rangeToggle input { transform: translateY(1px); }
+
+/* tuning UI */
 .ctrl { margin-top: 12px; }
 .ctrlTop {
   display: flex;
