@@ -180,11 +180,11 @@ const CURVES = {
     stopOffset: 0.0
   },
   bmd_film_gen5: {
-    label: "Blackmagic Film Gen 5",
-    decode: decodeBmdFilmGen5,
-    midGrey: 0.18,
-    stopOffset: BMD_GEN5.b
-  }
+  label: "Blackmagic Film Gen 5",
+  decode: decodeBmdFilmGen5,
+  midGrey: 0.18,
+  stopOffset: BMD_GEN5.b + 0.0025
+}
 };
 
 function decodeToLinear(curveKey, v) {
@@ -248,8 +248,8 @@ function buildOverlay(curveKey) {
     const B = decodeToLinear(curveKey, b);
 
     // Linear luma
-    const Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
-
+const Y = G; // TEST: SmallHD match often closer with green channel luminance
+    
     // Gen5 can go slightly negative in the linear segment -> clamp
     const Ycl = Math.max(0, Y);
 
