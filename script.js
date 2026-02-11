@@ -1,4 +1,4 @@
-// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + BMD contrast)
+// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + per-curve stop contrast)
 
 const fileInput     = document.getElementById("file");
 const logCurveSel   = document.getElementById("logCurve");
@@ -153,22 +153,24 @@ function decodeBmdFilmGen5(y) {
 // =========================
 // Curve registry (ONE place)
 // =========================
+// stopScale = "contrast" in stops-space (1.00 = none)
+// stopBias  = tiny global lift in stops-space (0.00 = none)
 const CURVES = {
   slog3: {
     label: "S-Gamut3.Cine / S-Log3 (Sony)",
     decode: decodeSLog3,
     midGrey: 0.18,
     stopOffset: 0.0,
-    contrastStops: 1.0,
-    biasStops: 0.0,
+    stopScale: 1.00,
+    stopBias: 0.00
   },
   logc3_ei800: {
     label: "ARRI LogC3 (EI 800)",
     decode: decodeLogC3_EI800,
     midGrey: 0.18,
     stopOffset: 0.0,
-    contrastStops: 1.0,
-    biasStops: 0.0,
+    stopScale: 1.00,
+    stopBias: 0.00
   },
   bmd_film_gen5: {
     label: "Blackmagic Film Gen 5",
@@ -176,11 +178,12 @@ const CURVES = {
     midGrey: 0.18,
     stopOffset: BMD_GEN5.b + 0.0025,
 
-    // === TUNE HIER ===
-    // Contrast in stop-domain: >1 = meer contrast (high hoger, low lager)
-    contrastStops: 1.1,   // jij had 1.14 → nu 1.08
-    // Wil je "geen stops erbij"? zet dit op 0.0
-    biasStops: 0.45        // jij zei 0.25 → nu 0.35 (optioneel)
+    // ✅ dit is je “meer contrast” fix (alleen BMD)
+    // probeer 1.08–1.14. (1.12 was jouw “bijna goed”)
+    stopScale: 1.10,
+
+    // ✅ mini lift als 'ie nét te donker voelt (zet gerust 0.00)
+    stopBias: 0.05
   }
 };
 
@@ -222,21 +225,20 @@ function buildOverlay(curveKey) {
   const out = dst.data;
 
   const curve = CURVES[curveKey] || CURVES.slog3;
-  const Yref = curve.midGrey ?? 0.18;
 
+  const Yref = curve.midGrey ?? 0.18;
   const expOff = getExposureOffsetStops();
   const YrefAdj = Yref * Math.pow(2, expOff);
 
   const off = curve.stopOffset ?? 0.0;
-  const contrast = curve.contrastStops ?? 1.0;
-  const bias = curve.biasStops ?? 0.0;
+  const stopScale = curve.stopScale ?? 1.0;
+  const stopBias  = curve.stopBias  ?? 0.0;
 
   for (let i = 0; i < src.length; i += 4) {
     const r0 = src[i]     / 255;
     const g0 = src[i + 1] / 255;
     const b0 = src[i + 2] / 255;
 
-    // levels remap BEFORE log decode
     const r = remapLevels01(r0);
     const g = remapLevels01(g0);
     const b = remapLevels01(b0);
@@ -245,21 +247,18 @@ function buildOverlay(curveKey) {
     const G = decodeToLinear(curveKey, g);
     const B = decodeToLinear(curveKey, b);
 
-    const Y  = computeY(R, G, B);
+    const Y   = computeY(R, G, B);
     const Ycl = Math.max(0, Y);
 
-    // Base stops
+    // RAW stops
     let st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
 
-    // Contrast in stop-domain (dit is de echte “meer contrast” fix)
-    st *= contrast;
-
-    // Optional per-curve bias (alleen BMD gebruikt dit nu)
-    st += bias;
+    // ✅ contrast in stops-space (mid-grey blijft pivot)
+    st = st * stopScale + stopBias;
 
     const z = quantizeStops(st);
-    const [pr, pg, pb] = pal[z];
 
+    const [pr, pg, pb] = pal[z];
     out[i]     = pr;
     out[i + 1] = pg;
     out[i + 2] = pb;
