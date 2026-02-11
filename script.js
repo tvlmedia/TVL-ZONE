@@ -25,7 +25,7 @@ let lastExpKey = null;
 // GLOBAL BRIGHTNESS BIAS (tune this)
 // =========================
 // +0.10 = subtiel, +0.15 = vaak bingo, +0.20 = duidelijk
-const BRIGHT_BIAS_STOPS = 0.15;
+const BRIGHT_BIAS_STOPS = 0.0;
 
 // =========================
 // Palette
