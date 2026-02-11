@@ -180,10 +180,10 @@ const CURVES = {
 
     // ✅ dit is je “meer contrast” fix (alleen BMD)
     // probeer 1.08–1.14. (1.12 was jouw “bijna goed”)
-    stopScale: 1.10,
+    stopScale: 1.13,
 
     // ✅ mini lift als 'ie nét te donker voelt (zet gerust 0.00)
-    stopBias: 0.55
+    stopBias: 0.65
   }
 };
 
