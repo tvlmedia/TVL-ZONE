@@ -183,7 +183,7 @@ const CURVES = {
     stopScale: 1.10,
 
     // ✅ mini lift als 'ie nét te donker voelt (zet gerust 0.00)
-    stopBias: 0.05
+    stopBias: 0.15
   }
 };
 
