@@ -178,9 +178,9 @@ const CURVES = {
 
     // === TUNE HIER ===
     // Contrast in stop-domain: >1 = meer contrast (high hoger, low lager)
-    contrastStops: 1.08,   // jij had 1.14 → nu 1.08
+    contrastStops: 1.1,   // jij had 1.14 → nu 1.08
     // Wil je "geen stops erbij"? zet dit op 0.0
-    biasStops: 0.35        // jij zei 0.25 → nu 0.35 (optioneel)
+    biasStops: 0.45        // jij zei 0.25 → nu 0.35 (optioneel)
   }
 };
 
