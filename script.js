@@ -1,15 +1,15 @@
-// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + per-curve stop contrast + UI tuning sliders)
+// TVL EL ZONE — Legal/Full + Gen5 stopOffset + luma mode + UI tuning sliders
 
-const fileInput     = document.getElementById("file");
-const logCurveSel   = document.getElementById("logCurve");
-const toggleBtn     = document.getElementById("toggleEl");
-const canvas        = document.getElementById("canvas");
-const ctx           = canvas.getContext("2d", { willReadFrequently: true });
+const fileInput   = document.getElementById("file");
+const logCurveSel = document.getElementById("logCurve");
+const toggleBtn   = document.getElementById("toggleEl");
+const canvas      = document.getElementById("canvas");
+const ctx         = canvas.getContext("2d", { willReadFrequently: true });
 
 const legalLevelsEl = document.getElementById("legalLevels"); // optional
-const expOffsetEl   = document.getElementById("expOffset");   // optional
+const expOffsetEl   = document.getElementById("expOffset");   // optional (not in HTML right now)
 
-// --- UI tuning (optional, if sliders exist in HTML) ---
+// UI tuning
 const uiContrast    = document.getElementById("uiContrast");
 const uiBias        = document.getElementById("uiBias");
 const uiOff         = document.getElementById("uiOff");
@@ -63,7 +63,7 @@ if (legend) {
 
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
-  return [(n>>16)&255, (n>>8)&255, n&255];
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 const pal = {};
 for (const [k, hex] of ZCOL.entries()) pal[k] = hexToRgb(hex);
@@ -128,7 +128,10 @@ function updateUiReadouts() {
 }
 
 function getTuneKey() {
-  return `${uiContrast?.value ?? ""}|${uiBias?.value ?? ""}|${uiOff?.value ?? ""}`;
+  const c = uiContrast?.value ?? "";
+  const b = uiBias?.value ?? "";
+  const o = uiOff?.value ?? "";
+  return `${c}|${b}|${o}`;
 }
 
 // =========================
@@ -179,7 +182,7 @@ function decodeBmdFilmGen5(y) {
 }
 
 // =========================
-// Curve registry (ONE place)
+// Curve registry
 // =========================
 const CURVES = {
   slog3: {
@@ -202,9 +205,9 @@ const CURVES = {
     label: "Blackmagic Film Gen 5",
     decode: decodeBmdFilmGen5,
     midGrey: 0.18,
+    // base offset for Gen5 stability
     stopOffset: BMD_GEN5.b + 0.0025,
-
-    // sane defaults (jij dialt met sliders)
+    // defaults (sliders overriden anyway)
     stopScale: 1.10,
     stopBias: 0.05
   }
@@ -216,14 +219,13 @@ function decodeToLinear(curveKey, v) {
 }
 
 // =========================
-// Luma model (key fix)
+// Luma model
 // =========================
 const LUMA_MODE = "maxRGB"; // "maxRGB" | "avgRGB" | "rec709"
-
 function computeY(R, G, B) {
   if (LUMA_MODE === "maxRGB") return Math.max(R, G, B);
   if (LUMA_MODE === "avgRGB") return (R + G + B) / 3;
-  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  return 0.2126 * R + 0.7152 * G + 0.0722 * B; // rec709 (linear)
 }
 
 // =========================
@@ -253,17 +255,19 @@ function buildOverlay(curveKey) {
   const expOff = getExposureOffsetStops();
   const YrefAdj = Yref * Math.pow(2, expOff);
 
-  // base from curve
+  // base curve tuning
   let off       = curve.stopOffset ?? 0.0;
   let stopScale = curve.stopScale ?? 1.0;
   let stopBias  = curve.stopBias  ?? 0.0;
 
-  // UI overrides (global tuning)
+  // global UI tuning
   stopScale = readSlider(uiContrast, stopScale);
   stopBias  = readSlider(uiBias, stopBias);
 
-  // offset slider (handig voor BMD fine-tune)
-  off += readSlider(uiOff, 0.0);
+  // Offset slider: ONLY active for BMD (anders sla je andere curves kapot)
+  if (curveKey === "bmd_film_gen5") {
+    off += readSlider(uiOff, 0.0);
+  }
 
   for (let i = 0; i < src.length; i += 4) {
     const r0 = src[i]     / 255;
@@ -281,10 +285,10 @@ function buildOverlay(curveKey) {
     const Y   = computeY(R, G, B);
     const Ycl = Math.max(0, Y);
 
-    // RAW stops
+    // stops relative to mid-grey
     let st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
 
-    // contrast/bias in stops-space (pivot = mid-grey)
+    // contrast + brightness in stop-space (pivot = 0 stops)
     st = st * stopScale + stopBias;
 
     const z = quantizeStops(st);
@@ -335,11 +339,6 @@ toggleBtn?.addEventListener("click", () => {
 });
 
 logCurveSel?.addEventListener("change", () => {
-  overlayImageData = null;
-  render();
-});
-
-expOffsetEl?.addEventListener("input", () => {
   overlayImageData = null;
   render();
 });
