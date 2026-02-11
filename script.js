@@ -1,4 +1,4 @@
-// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + per-curve stop contrast)
+// TVL EL ZONE — complete script (Legal/Full + Gen5 stopOffset + luma mode + per-curve stop contrast + UI tuning sliders)
 
 const fileInput     = document.getElementById("file");
 const logCurveSel   = document.getElementById("logCurve");
@@ -8,6 +8,15 @@ const ctx           = canvas.getContext("2d", { willReadFrequently: true });
 
 const legalLevelsEl = document.getElementById("legalLevels"); // optional
 const expOffsetEl   = document.getElementById("expOffset");   // optional
+
+// --- UI tuning (optional, if sliders exist in HTML) ---
+const uiContrast    = document.getElementById("uiContrast");
+const uiBias        = document.getElementById("uiBias");
+const uiOff         = document.getElementById("uiOff");
+
+const uiContrastVal = document.getElementById("uiContrastVal");
+const uiBiasVal     = document.getElementById("uiBiasVal");
+const uiOffVal      = document.getElementById("uiOffVal");
 
 let img = new Image();
 let baseBitmap = null;
@@ -20,6 +29,7 @@ let overlayImageData = null;
 let lastCurveKey = null;
 let lastLevelsKey = null;
 let lastExpKey = null;
+let lastTuneKey = null;
 
 // =========================
 // Palette
@@ -95,12 +105,30 @@ function isLegalLevels() {
   return !!(legalLevelsEl && legalLevelsEl.checked);
 }
 
-// If legal: stretch 16–235 to 0–1 (8-bit video range)
 function remapLevels01(v) {
   if (!isLegalLevels()) return v;
   const min = 16 / 255;
   const max = 235 / 255;
   return clamp01((v - min) / (max - min));
+}
+
+// =========================
+// UI helpers
+// =========================
+function readSlider(el, fallback) {
+  if (!el) return fallback;
+  const n = parseFloat(el.value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function updateUiReadouts() {
+  if (uiContrastVal) uiContrastVal.textContent = readSlider(uiContrast, 1.10).toFixed(2);
+  if (uiBiasVal)     uiBiasVal.textContent     = readSlider(uiBias, 0.05).toFixed(2);
+  if (uiOffVal)      uiOffVal.textContent      = readSlider(uiOff, 0.0025).toFixed(4);
+}
+
+function getTuneKey() {
+  return `${uiContrast?.value ?? ""}|${uiBias?.value ?? ""}|${uiOff?.value ?? ""}`;
 }
 
 // =========================
@@ -153,8 +181,6 @@ function decodeBmdFilmGen5(y) {
 // =========================
 // Curve registry (ONE place)
 // =========================
-// stopScale = "contrast" in stops-space (1.00 = none)
-// stopBias  = tiny global lift in stops-space (0.00 = none)
 const CURVES = {
   slog3: {
     label: "S-Gamut3.Cine / S-Log3 (Sony)",
@@ -178,12 +204,9 @@ const CURVES = {
     midGrey: 0.18,
     stopOffset: BMD_GEN5.b + 0.0025,
 
-    // ✅ dit is je “meer contrast” fix (alleen BMD)
-    // probeer 1.08–1.14. (1.12 was jouw “bijna goed”)
-    stopScale: 1.17,
-
-    // ✅ mini lift als 'ie nét te donker voelt (zet gerust 0.00)
-    stopBias: 0.5
+    // sane defaults (jij dialt met sliders)
+    stopScale: 1.10,
+    stopBias: 0.05
   }
 };
 
@@ -230,9 +253,17 @@ function buildOverlay(curveKey) {
   const expOff = getExposureOffsetStops();
   const YrefAdj = Yref * Math.pow(2, expOff);
 
-  const off = curve.stopOffset ?? 0.0;
-  const stopScale = curve.stopScale ?? 1.0;
-  const stopBias  = curve.stopBias  ?? 0.0;
+  // base from curve
+  let off       = curve.stopOffset ?? 0.0;
+  let stopScale = curve.stopScale ?? 1.0;
+  let stopBias  = curve.stopBias  ?? 0.0;
+
+  // UI overrides (global tuning)
+  stopScale = readSlider(uiContrast, stopScale);
+  stopBias  = readSlider(uiBias, stopBias);
+
+  // offset slider (handig voor BMD fine-tune)
+  off += readSlider(uiOff, 0.0);
 
   for (let i = 0; i < src.length; i += 4) {
     const r0 = src[i]     / 255;
@@ -253,12 +284,12 @@ function buildOverlay(curveKey) {
     // RAW stops
     let st = log2((Ycl + off + 1e-12) / (YrefAdj + off + 1e-12));
 
-    // ✅ contrast in stops-space (mid-grey blijft pivot)
+    // contrast/bias in stops-space (pivot = mid-grey)
     st = st * stopScale + stopBias;
 
     const z = quantizeStops(st);
-
     const [pr, pg, pb] = pal[z];
+
     out[i]     = pr;
     out[i + 1] = pg;
     out[i + 2] = pb;
@@ -269,6 +300,7 @@ function buildOverlay(curveKey) {
   lastCurveKey = curveKey;
   lastLevelsKey = isLegalLevels() ? "legal" : "full";
   lastExpKey = String(getExposureOffsetStops());
+  lastTuneKey = getTuneKey();
 }
 
 function render() {
@@ -277,6 +309,7 @@ function render() {
   const curveKey  = logCurveSel?.value || "slog3";
   const levelsKey = isLegalLevels() ? "legal" : "full";
   const expKey    = String(getExposureOffsetStops());
+  const tuneKey   = getTuneKey();
 
   if (!elOn) return drawBaseFromSources();
 
@@ -284,7 +317,8 @@ function render() {
     !overlayImageData ||
     lastCurveKey !== curveKey ||
     lastLevelsKey !== levelsKey ||
-    lastExpKey !== expKey;
+    lastExpKey !== expKey ||
+    lastTuneKey !== tuneKey;
 
   if (needsRebuild) buildOverlay(curveKey);
   if (overlayImageData) ctx.putImageData(overlayImageData, 0, 0);
@@ -304,14 +338,29 @@ logCurveSel?.addEventListener("change", () => {
   overlayImageData = null;
   render();
 });
+
 expOffsetEl?.addEventListener("input", () => {
   overlayImageData = null;
   render();
 });
+
 legalLevelsEl?.addEventListener("change", () => {
   overlayImageData = null;
   render();
 });
+
+function onTune() {
+  updateUiReadouts();
+  overlayImageData = null;
+  render();
+}
+
+uiContrast?.addEventListener("input", onTune);
+uiBias?.addEventListener("input", onTune);
+uiOff?.addEventListener("input", onTune);
+
+// init UI readouts
+updateUiReadouts();
 
 fileInput?.addEventListener("change", async (e) => {
   const f = e.target.files?.[0];
@@ -323,6 +372,7 @@ fileInput?.addEventListener("change", async (e) => {
   lastCurveKey = null;
   lastLevelsKey = null;
   lastExpKey = null;
+  lastTuneKey = null;
   baseBitmap = null;
 
   toggleBtn.disabled = false;
