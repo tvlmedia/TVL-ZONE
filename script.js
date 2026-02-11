@@ -177,7 +177,7 @@ const CURVES = {
   decode: decodeBmdFilmGen5,
   midGrey: 0.18,
   stopOffset: BMD_GEN5.b + 0.0025,
-  calibrationStops: 0.25   // ← kwart stopje lichter, alleen voor BMD
+  calibrationStops: 0.5   // ← kwart stopje lichter, alleen voor BMD
 }
 };
 
