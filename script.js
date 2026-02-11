@@ -183,7 +183,7 @@ const CURVES = {
   label: "Blackmagic Film Gen 5",
   decode: decodeBmdFilmGen5,
   midGrey: 0.18,
-  stopOffset: BMD_GEN5.b + 0.0125
+  stopOffset: BMD_GEN5.b + 0.0325
 }
 };
 
