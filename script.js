@@ -111,27 +111,33 @@ function decodeLogC3_EI800(t) {
   return (t - LOGC3_EI800.f) / LOGC3_EI800.e;
 }
 
-// Blackmagic Film Generation 5 inverse OETF (used by PYXIS / Gen5 science)
+// Blackmagic Film Generation 5 inverse OETF (log -> linear)
 const BMD_GEN5 = {
-  A: 0.08692876065491224,
-  B: 0.005494072432257808,
-  C: 0.5300133392291939,
-  D: 8.283605932402494,
-  E: 0.09246575342465753,
-  LIN_CUT: 0.005,
+  // From OCIO/ACES Blackmagic Gen5 log camera transform (base e)
+  a: 0.08692876065491224,     // logSideSlope
+  b: 0.005494072432257808,    // linSideOffset (the "+ b" inside ln and "- b" after exp)
+  c: 0.5300133392291939,      // logSideOffset
+
+  // Linear segment (computed / published)
+  linSlope: 8.283605932402494,
+  linOffset: 0.09246575342465753,
+
+  linCut: 0.005,              // linSideBreak
 };
+
+// logCut is the encoded value at linCut (continuity point)
+const BMD_GEN5_LOG_CUT = BMD_GEN5.linSlope * BMD_GEN5.linCut + BMD_GEN5.linOffset;
+
 function decodeBmdFilmGen5(y) {
   y = clamp01(y);
-  const LOG_CUT = BMD_GEN5.D * BMD_GEN5.LIN_CUT + BMD_GEN5.E;
-  if (y < LOG_CUT) return (y - BMD_GEN5.E) / BMD_GEN5.D;
-  return Math.exp((y - BMD_GEN5.C) / BMD_GEN5.A) - BMD_GEN5.B;
-}
 
-// DJI D-Log (X9) inverse (normalized 0..1)
-function decodeDLog_X9(x) {
-  x = clamp01(x);
-  if (x <= 0.14) return (x - 0.0929) / 6.025;
-  return (Math.pow(10.0, (3.89616 * x - 2.27752)) - 0.0108) / 0.9892;
+  // Below log cut: invert the linear segment
+  if (y <= BMD_GEN5_LOG_CUT) {
+    return (y - BMD_GEN5.linOffset) / BMD_GEN5.linSlope;
+  }
+
+  // Above: invert log segment (base e)
+  return Math.exp((y - BMD_GEN5.c) / BMD_GEN5.a) - BMD_GEN5.b;
 }
 
 /**
@@ -248,44 +254,55 @@ logCurveSel.addEventListener("change", () => {
   render();
 });
 
-fileInput.addEventListener("change", (e) => {
+fileInput.addEventListener("change", async (e) => {
   const f = e.target.files?.[0];
   if (!f) return;
 
-  const url = URL.createObjectURL(f);
+  hasImage = false;
+  baseImageData = null;
+  overlayImageData = null;
+  lastCurveKey = null;
 
-  img = new Image();
-  img.onload = () => {
-    hasImage = true;
-    elOn = false;
+  toggleBtn.disabled = false;
+  if (logCurveSel) logCurveSel.disabled = false;
+  toggleBtn.textContent = "EL Zone: OFF";
+  elOn = false;
 
-    toggleBtn.disabled = false;
-    if (logCurveSel) logCurveSel.disabled = false;
+  try {
+    // Prefer: bypass ICC/sRGB conversions
+    let bmp = null;
+    if ("createImageBitmap" in window) {
+      try {
+        bmp = await createImageBitmap(f, { colorSpaceConversion: "none" });
+      } catch (_) {
+        bmp = await createImageBitmap(f); // fallback
+      }
+    }
 
-    toggleBtn.textContent = "EL Zone: OFF";
+    if (bmp) {
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bmp, 0, 0);
 
-    // reset caches
-    baseImageData = null;
-    overlayImageData = null;
-    lastCurveKey = null;
+      baseImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      hasImage = true;
+      render();
+      return;
+    }
 
-    drawBase();
-    render();
+    // Fallback: old Image() path
+    const url = URL.createObjectURL(f);
+    img = new Image();
+    img.onload = () => {
+      hasImage = true;
+      drawBase();
+      render();
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
 
-    URL.revokeObjectURL(url);
-  };
-
-  img.onerror = () => {
-    hasImage = false;
-    baseImageData = null;
-    overlayImageData = null;
-    lastCurveKey = null;
-    toggleBtn.disabled = true;
-    if (logCurveSel) logCurveSel.disabled = true;
-    toggleBtn.textContent = "EL Zone: OFF";
-    URL.revokeObjectURL(url);
+  } catch (err) {
     alert("Kon afbeelding niet laden. Probeer een andere file (liefst PNG/JPG).");
-  };
-
-  img.src = url;
+  }
 });
