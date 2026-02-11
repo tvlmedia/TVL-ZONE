@@ -44,6 +44,38 @@
         <div id="legend" class="legend"></div>
       </div>
 
+      <div class="card">
+  <div class="title">Tuning</div>
+
+  <div class="ctrl">
+    <div class="ctrlTop">
+      <span>Contrast (stops)</span>
+      <span id="uiContrastVal" class="val">1.10</span>
+    </div>
+    <input id="uiContrast" type="range" min="0.90" max="1.25" step="0.01" value="1.10">
+  </div>
+
+  <div class="ctrl">
+    <div class="ctrlTop">
+      <span>Brightness (stops)</span>
+      <span id="uiBiasVal" class="val">0.05</span>
+    </div>
+    <input id="uiBias" type="range" min="-0.30" max="0.30" step="0.01" value="0.05">
+  </div>
+
+  <div class="ctrl">
+    <div class="ctrlTop">
+      <span>Offset (BMD)</span>
+      <span id="uiOffVal" class="val">0.0025</span>
+    </div>
+    <input id="uiOff" type="range" min="-0.0100" max="0.0200" step="0.0001" value="0.0025">
+  </div>
+
+  <div class="subnote">
+    Tip: dit werkt op alle curves, maar BMD is meestal waar je 'm nodig hebt.
+  </div>
+</div>
+
       <div class="card hint">
         <div class="title">Notes</div>
         <p>
