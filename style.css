@@ -105,3 +105,24 @@ canvas { width: 100%; height: auto; display: block; }
 .rangeToggle input {
   transform: translateY(1px);
 }
+.ctrl { margin-top: 12px; }
+.ctrlTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  opacity: .95;
+}
+.val { opacity: .8; font-variant-numeric: tabular-nums; }
+
+input[type="range"]{
+  width: 100%;
+  margin-top: 8px;
+}
+
+.subnote{
+  margin-top: 10px;
+  font-size: 12px;
+  opacity: .7;
+  line-height: 1.35;
+}
